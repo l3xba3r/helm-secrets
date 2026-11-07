@@ -57,12 +57,6 @@ setup_suite() {
             helm_plugin_install "diff" --version 3.5.0
         fi
 
-        if on_windows || on_wsl; then
-            "${HELM_BIN}" secrets patch windows
-        else
-            "${HELM_BIN}" secrets patch unix
-        fi
-
         mkdir -p "$HOME/.gnupg/"
         touch "$HOME/.gnupg/common.conf"
 
@@ -111,17 +105,30 @@ helm_plugin_install() {
         case "${1}" in
         diff)
             URL="https://github.com/databus23/helm-diff"
-            VERSION=v3.6.0
+            # renovate: github=databus23/helm-diff
+            VERSION=v3.15.15
             ;;
         git)
             URL="https://github.com/aslafy-z/helm-git"
-            VERSION=v0.14.0
+            # renovate: github=aslafy-z/helm-git
+            VERSION=v1.5.2
             ;;
         secrets)
             URL="$(_winpath "${GIT_ROOT}")"
+            if helm_version_greater_or_equal_than 4.0.0; then
+                "${HELM_BIN}" plugin install "${URL}/plugins/helm-secrets-getter"
+                "${HELM_BIN}" plugin install "${URL}/plugins/helm-secrets-post-renderer"
+                URL="${URL}/plugins/helm-secrets-cli"
+            fi
             ;;
         esac
 
-        "${HELM_BIN}" plugin install "${URL}" "${@:2}" ${VERSION:+--version "${VERSION}"}
+        VERIFY=""
+
+        if helm_version_greater_or_equal_than 4.0.0; then
+            VERIFY="--verify=false"
+        fi
+
+        "${HELM_BIN}" plugin install "${URL}" "${@:2}" ${VERSION:+--version "${VERSION}"} ${VERIFY}
     } >&2
 }

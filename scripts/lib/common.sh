@@ -95,9 +95,12 @@ on_cygwin() { false; }
 _sed_i() { sed -i "$@"; }
 _winpath() { printf '%s' "${1}"; }
 _helm_winpath() { printf '%s' "${1}"; }
+_helm_bin() { printf '%s' "${HELM_BIN}"; }
 
 case "$(uname -s)" in
 CYGWIN* | MINGW64_NT*)
+    HELM_BIN="$(cygpath -u "${HELM_BIN}")"
+
     on_cygwin() { true; }
     _winpath() {
         if [ "${2:-0}" = "1" ]; then
@@ -106,7 +109,11 @@ CYGWIN* | MINGW64_NT*)
             printf '%s' "${1}" | cygpath -w -l -f -
         fi
     }
+
     _helm_winpath() { _winpath "$@"; }
+    _helm_bin() { _winpath "${HELM_BIN}"; }
+
+    _sed_i 's!  - command: .*!  - command: "scripts/wrapper/run.cmd downloader"!' "${HELM_PLUGIN_DIR}/plugin.yaml"
     ;;
 Darwin)
     case $(sed --help 2>&1) in
@@ -127,9 +134,33 @@ Darwin)
             fi
         }
 
+        # We are on a Linux VM, but helm.exe (Win32) is called
         case "${HELM_BIN}" in
-        *.exe) _helm_winpath() { _winpath "$@"; } ;;
+        *.exe)
+            _helm_winpath() { _winpath "$@"; }
+
+            _sed_i 's!  - command: .*!  - command: "scripts/wrapper/run.cmd downloader"!' "${HELM_PLUGIN_DIR}/plugin.yaml"
+            ;;
         esac
     fi
     ;;
 esac
+
+_helm_version_raw="$("${HELM_BIN}" version --short)"
+
+case "${_helm_version_raw#[vV]}" in
+2.*)
+    _helm_version() { echo 2; }
+    ;;
+3.*)
+    _helm_version() { echo 3; }
+    ;;
+4.*)
+    _helm_version() { echo 4; }
+    ;;
+*)
+    fatal "Unsupported helm version: ${_helm_version_raw:-<empty output>}"
+    ;;
+esac
+
+unset _helm_version_raw

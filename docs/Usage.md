@@ -15,7 +15,6 @@ Available Commands:
   decrypt Decrypt secrets file
   edit    Edit secrets file and encrypt afterwards
   dir     Get plugin directory
-  patch   Enables windows specific adjustments
   <cmd>   wrapper that decrypts encrypted yaml files before running helm <cmd>
 
 Available Options:
@@ -97,15 +96,6 @@ $ helm secrets edit examples/sops/secrets.yaml
 
 There is new feature in SOPS master that allows using \$EDITOR to spcify editor used by sops but not released yet.
 
-### Clean
-
-The operation will delete all decrypted files in a directory, recursively:
-
-```
-$ helm secrets clean examples/sops/
-removed examples/sops/secrets.yaml.dec
-```
-
 If you use git there is commit hook that prevents commiting decrypted files and you can add all \*.yaml.dec files in you repository `.gitignore` file.
 
 ### Summary
@@ -137,7 +127,7 @@ charts/
 ```
 
 As you can see we can run different PGP or KMS keys per project, globally or per any tree level. Thanks to this we can isolate tree on different CI/CD instances using same GIT repository.
-As we use simple -f option when running the helm wrapper we can just use encrypted secrets.yaml and all these secrets will be decrypted and cleaned on the fly before and after helm run.
+As we use simple -f option when running the helm wrapper we can just use encrypted secrets.yaml and all these secrets will be decrypted on the fly before and after helm run.
 
 `.sops.yaml` file example
 
@@ -218,7 +208,7 @@ removed helm_vars/secrets.yaml.dec
 
 You can see that we use a global secrets file and a specific secrets file for this app in this project/environment/region. We use some plain value files next to secrets. We use values from secrets in some secrets template in helloworld application chart template and some values are used in the configmap template in the same chart. Some values are added as env variables in deployment manifest templates in the chart. As you can see we can use secrets and values in helm in many ways. Everything depends on use case.
 
-Even when helm failed then decrypted files are cleaned
+Even when helm fails, decrypted files are removed automatically
 
 ```
 AWS_PROFILE=sandbox helm-wrapper upgrade \
@@ -386,6 +376,10 @@ helm template -f 'secrets://secrets.yaml' --set-file 'secrets+literal://vals!ref
 ## Restriction
 
 You can configure the allowed backend by the environment variable `HELM_SECRETS_ALLOWED_BACKENDS`, e.g. `HELM_SECRETS_ALLOWED_BACKENDS=sops,vals`
+
+Out-of-tree backends (paths to a backend script) are only accepted in the `backend!` prefix when the path is listed in
+`HELM_SECRETS_ALLOWED_BACKENDS`, e.g. `HELM_SECRETS_ALLOWED_BACKENDS=sops,/opt/helm-secrets/backend.sh`.
+The `--backend` option and `HELM_SECRETS_BACKEND` are not affected by this additional restriction.
 
 ## Limitations
 

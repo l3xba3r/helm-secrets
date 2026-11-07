@@ -44,6 +44,38 @@ load '../bats/extensions/bats-file/load'
     assert_file_not_exists "${VALUES_PATH}.dec"
 }
 
+@test "template: helm template w/ chart + secrets.yaml,some-secrets.yaml" {
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+    SOME_VALUES="assets/values/${HELM_SECRETS_BACKEND}/some-secrets.yaml"
+    SOME_VALUES_PATH="${TEST_TEMP_DIR}/${SOME_VALUES}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" -f "${VALUES_PATH},${SOME_VALUES_PATH}" 2>&1
+
+    assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
+    assert_output -e "\[helm-secrets\] Decrypt: .*${SOME_VALUES}"
+    assert_output --partial "port: 83"
+    assert_success
+}
+
+@test "template: helm template w/ chart + secrets.yaml + --set-file file.txt,file.txt" {
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+    SET_FILE_PATH="$(dirname "${VALUES_PATH}")/files/file.txt"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" -f "${VALUES_PATH}" \
+        --set-file "podAnnotations.fromFile=${SET_FILE_PATH},podAnnotations.fromFile2=${SET_FILE_PATH}" 2>&1
+
+    assert_output --partial "port: 81"
+    assert_output -e "fromFile: .*hello=fromextrafile"
+    assert_output -e "fromFile2: .*hello=fromextrafile"
+    assert_success
+}
+
 @test "template: helm template w/ chart + secrets.yaml + --values" {
     VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.yaml"
     VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
@@ -261,6 +293,27 @@ key2: value" 2>&1
     assert_success
 }
 
+@test "template: helm template w/ chart + ?not-exists.yaml + not-exists2.yaml" {
+    create_chart "${TEST_TEMP_DIR}"
+
+    # The '?' prefix must only apply to its own file, not to the following ones.
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" \
+        -f "?not-exists.yaml" -f "not-exists2.yaml" 2>&1
+
+    assert_output --partial "[helm-secrets] File does not exist: not-exists2.yaml"
+    assert_failure
+}
+
+@test "template: helm template w/ chart + ?not-exists.yaml + --set-file not-exists2.yaml" {
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" \
+        -f "?not-exists.yaml" --set-file "podAnnotations.fromFile=not-exists2.yaml" 2>&1
+
+    assert_output --partial "[helm-secrets] File does not exist: not-exists2.yaml"
+    assert_failure
+}
+
 @test "template: helm template w/ chart + not-exists.yaml + --ignore-missing-values" {
     VALUES="not-exists.yaml"
     VALUES_PATH="${VALUES}"
@@ -399,16 +452,82 @@ key2: value" 2>&1
 }
 
 @test "template: helm template w/ chart + secrets.yaml + special path" {
-    if on_windows; then
-        skip "Skip on Windows"
-    fi
-
     VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.yaml"
     VALUES_PATH="${SPECIAL_CHAR_DIR}/${VALUES}"
 
     create_chart "${SPECIAL_CHAR_DIR}"
 
     run "${HELM_BIN}" secrets template "${SPECIAL_CHAR_DIR}/chart" -f "${VALUES_PATH}" 2>&1
+
+    assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
+    assert_output --partial "port: 81"
+    assert_output -e "\[helm-secrets\] Removed: .*${VALUES}.dec"
+    assert_success
+    assert_file_not_exists "${VALUES_PATH}.dec"
+}
+
+@test "template: helm template w/ chart + secrets.yaml + space path" {
+    if helm_version_less_than 3.13.0; then
+        skip
+    fi
+
+    if on_windows; then
+        HELM_DATA_HOME="$("${HELM_BIN}" env HELM_DATA_HOME)\\dir ${BATS_ROOT_PID}\\"
+    else
+        HELM_DATA_HOME="$("${HELM_BIN}" env HELM_DATA_HOME)/dir ${BATS_ROOT_PID}/"
+    fi
+
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" env >&2
+    env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" plugin list >&2
+    if helm_version_greater_or_equal_than 4.0.0; then
+        env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" plugin install "$(_winpath "${GIT_ROOT}")/plugins/helm-secrets-cli/" >&2
+    else
+        env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" plugin install "$(_winpath "${GIT_ROOT}")" >&2
+    fi
+    #env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" plugin list >&2
+
+    run env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" -f "${VALUES_PATH}" 2>&1
+
+    assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
+    assert_output --partial "port: 81"
+    assert_output -e "\[helm-secrets\] Removed: .*${VALUES}.dec"
+    assert_success
+    assert_file_not_exists "${VALUES_PATH}.dec"
+}
+
+@test "template: helm template w/ chart + secrets.yaml + bracket in path" {
+    if helm_version_less_than 3.13.0; then
+        skip
+    fi
+
+    if on_windows; then
+        HELM_DATA_HOME="$("${HELM_BIN}" env HELM_DATA_HOME)\\dir(${BATS_ROOT_PID})\\"
+    else
+        HELM_DATA_HOME="$("${HELM_BIN}" env HELM_DATA_HOME)/dir(${BATS_ROOT_PID})/"
+    fi
+
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" env >&2
+    env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" plugin list >&2
+
+    if helm_version_greater_or_equal_than 4.0.0; then
+        env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" plugin install "$(_winpath "${GIT_ROOT}")/plugins/helm-secrets-cli/" >&2
+    else
+        env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" plugin install "$(_winpath "${GIT_ROOT}")" >&2
+    fi
+
+    #env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" plugin list >&2
+
+    run env HELM_DATA_HOME="${HELM_DATA_HOME}" WSLENV="HELM_DATA_HOME:${WSLENV}" "${HELM_BIN}" --debug secrets template "${TEST_TEMP_DIR}/chart" -f "${VALUES_PATH}" 2>&1
 
     assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
     assert_output --partial "port: 81"
@@ -615,6 +734,72 @@ key2: value" 2>&1
     assert_output --partial "quotes: 1234567!!\"§\$%&/(?=)(/&%\$§\"><;:_,;:_'''*'*\ndks"
     assert_success
     assert_file_not_exists "${VALUES_PATH}.dec"
+}
+
+@test "template: helm template w/ chart + wrapper --set preserves trailing newline before equality check" {
+    if on_windows; then
+        skip "Multiline does not work on windows"
+    fi
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" \
+        --set key=dummy \
+        --set "podAnnotations.second=va\\,lue
+" 2>&1
+
+    assert_output --partial "second: |"
+    assert_output --partial "va,lue"
+    refute_output --partial "va\\,lue"
+    assert_success
+}
+
+@test "template: helm template w/ chart + secrets.trailing-newline.yaml + wrapper matches secrets protocol" {
+    if on_windows || ! is_backend "sops"; then
+        skip "Multiline does not work on windows"
+    fi
+
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.trailing-newline.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    expected_finalnewline=$'        finalnewline: \\|\n          hello\n          world\n        value1: \\|\\+'
+    expected_value1=$'        value1: \\|\\+\n          multi\n          line\n[[:blank:]]*\n        value2: \\|\\+'
+    expected_value2=$'        value2: \\|\\+\n          multi\n          line\n[[:blank:]]*\n[[:blank:]]*\n        value3: \\|\\+'
+    expected_value3=$'        value3: \\|\\+\n          multi\n          line\n[[:blank:]]*\n[[:blank:]]*\n[[:blank:]]*\n      labels:'
+
+    run "${HELM_BIN}" template "${TEST_TEMP_DIR}/chart" -f "secrets://${VALUES_PATH}" 2>&1
+    protocol_output="${output}"
+    assert_success
+    assert_output -e "${expected_finalnewline}"
+    assert_output -e "${expected_value1}"
+    assert_output -e "${expected_value2}"
+    assert_output -e "${expected_value3}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" -f "secrets://${VALUES_PATH}" 2>&1
+    assert_success
+    refute_output --partial "[helm-secrets] Decrypt: secrets://"
+    assert_output -e "${expected_finalnewline}"
+    assert_output -e "${expected_value1}"
+    assert_output -e "${expected_value2}"
+    assert_output -e "${expected_value3}"
+
+    run "${HELM_BIN}" secrets -q template "${TEST_TEMP_DIR}/chart" -f "${VALUES_PATH}" 2>&1
+    assert_success
+    assert_equal "${output}" "${protocol_output}"
+    assert_output -e "${expected_finalnewline}"
+    assert_output -e "${expected_value1}"
+    assert_output -e "${expected_value2}"
+    assert_output -e "${expected_value3}"
+
+    run "${HELM_BIN}" secrets -q template "${TEST_TEMP_DIR}/chart" -f "secrets://${VALUES_PATH}" 2>&1
+    assert_success
+    assert_equal "${output}" "${protocol_output}"
+    assert_output -e "${expected_finalnewline}"
+    assert_output -e "${expected_value1}"
+    assert_output -e "${expected_value2}"
+    assert_output -e "${expected_value3}"
 }
 
 @test "template: helm template w/ chart + --set-file service.port=secrets+literal://" {
@@ -1279,6 +1464,46 @@ key2: value" 2>&1
     assert_success
 }
 
+@test "template: helm template + secrets:// + HELM_SECRETS_LOAD_GPG_KEYS key file" {
+    if on_windows || on_wsl || ! is_backend "sops"; then
+        skip
+    fi
+
+    VALUES_PATH="${TEST_TEMP_DIR}/assets/values/sops/secrets.gpg_key.yaml"
+    KEY_PATH="${TEST_TEMP_DIR}/assets/gpg/private2.gpg"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    # Helm's direct getter must load its own key; Helm does not forward stdin.
+    run env -u TMPDIR -u HELM_SECRETS_INTERNAL_GPG_KEYS_LOADED \
+        HELM_SECRETS_LOAD_GPG_KEYS="${KEY_PATH}" \
+        "${HELM_BIN}" template "${TEST_TEMP_DIR}/chart" -f "secrets://${VALUES_PATH}"
+
+    assert_success
+    assert_output --partial "port: 91"
+}
+
+@test "template: helm secrets template + secrets:// + HELM_SECRETS_LOAD_GPG_KEYS=/dev/stdin" {
+    if on_windows || on_wsl || ! is_backend "sops"; then
+        skip
+    fi
+
+    VALUES_PATH="${TEST_TEMP_DIR}/assets/values/sops/secrets.gpg_key.yaml"
+    KEY_PATH="${TEST_TEMP_DIR}/assets/gpg/private2.gpg"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    # The parent consumes the piped key; both child getters must reuse GNUPGHOME.
+    run bash -c '
+        cat "$1" | env -u TMPDIR -u HELM_SECRETS_INTERNAL_GPG_KEYS_LOADED \
+            HELM_SECRETS_LOAD_GPG_KEYS=/dev/stdin \
+            "$2" secrets template "$3" -f "secrets://$4" -f "secrets://$4"
+    ' _ "${KEY_PATH}" "${HELM_BIN}" "${TEST_TEMP_DIR}/chart" "${VALUES_PATH}"
+
+    assert_success
+    assert_output --partial "port: 91"
+}
+
 @test "template: helm template w/ chart + secrets.gpg_key.yaml + wrapper + HELM_SECRETS_LOAD_GPG_KEYS=/private2.gpg" {
     if on_windows || on_wsl || ! is_backend "sops"; then
         skip
@@ -1585,6 +1810,71 @@ key2: value" 2>&1
     assert_file_not_exists "${VALUES_PATH}.dec"
 }
 
+@test "template: helm template w/ chart + some-secrets.yaml + --kube-insecure-skip-tls-verify" {
+    skip "broken, see https://github.com/helm/helm/issues/13686"
+
+    if ! is_backend "sops"; then
+        skip
+    fi
+
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/some-secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" --kube-insecure-skip-tls-verify -f "${VALUES_PATH}" 2>&1
+
+    assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
+    assert_output --partial "port: 83"
+    assert_output -e "\[helm-secrets\] Removed: .*${VALUES}.dec"
+    assert_success
+    assert_file_not_exists "${VALUES_PATH}.dec"
+}
+
+@test "template: helm template w/ chart + some-secrets.yaml + --kube-insecure-skip-tls-verify=true" {
+    if ! is_backend "sops"; then
+        skip
+    fi
+    if helm_version_less_than 3.15.2; then
+        skip
+    fi
+
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/some-secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" --kube-insecure-skip-tls-verify=true -f "${VALUES_PATH}" 2>&1
+
+    assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
+    assert_output --partial "port: 83"
+    assert_output -e "\[helm-secrets\] Removed: .*${VALUES}.dec"
+    assert_success
+    assert_file_not_exists "${VALUES_PATH}.dec"
+}
+
+@test "template: helm template w/ chart + some-secrets.yaml + --insecure-skip-tls-verify=true" {
+    if ! is_backend "sops"; then
+        skip
+    fi
+    if helm_version_greater_or_equal_than 3.15.2; then
+        skip
+    fi
+
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/some-secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" --insecure-skip-tls-verify=true -f "${VALUES_PATH}" 2>&1
+
+    assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
+    assert_output --partial "port: 83"
+    assert_output -e "\[helm-secrets\] Removed: .*${VALUES}.dec"
+    assert_success
+    assert_file_not_exists "${VALUES_PATH}.dec"
+}
+
 @test "template: helm template w/ chart + some-secrets.yaml + HELM_SECRETS_BACKEND_ARGS (complex)" {
     if ! is_backend "sops"; then
         skip
@@ -1871,6 +2161,44 @@ key2: value" 2>&1
     assert_success
 }
 
+@test "template: helm template w/ chart + --evaluate-templates + invalid reference shows backend error" {
+    if on_wsl || ! is_backend "vals"; then
+        skip
+    fi
+
+    create_chart "${TEST_TEMP_DIR}" false
+
+    {
+        printf 'apiVersion: v1\nkind: ConfigMap\ndata:\n'
+        printf '  invalid: ref+file://%s/non-exists.txt\n' "${TEST_TEMP_DIR}"
+    } >"${TEST_TEMP_DIR}/chart/templates/invalid.yaml"
+
+    run "${HELM_BIN}" secrets --evaluate-templates template "${TEST_TEMP_DIR}/chart" 2>&1
+
+    assert_output --partial "[helm-secrets] vals error: expand file://${TEST_TEMP_DIR}/non-exists.txt"
+    assert_failure
+}
+
+@test "template: helm template w/ chart + --evaluate-templates + invalid reference + HELM_SECRETS_DEC_TMP_DIR shows backend error" {
+    if on_wsl || ! is_backend "vals"; then
+        skip
+    fi
+
+    create_chart "${TEST_TEMP_DIR}" false
+
+    {
+        printf 'apiVersion: v1\nkind: ConfigMap\ndata:\n'
+        printf '  invalid: ref+file://%s/non-exists.txt\n' "${TEST_TEMP_DIR}"
+    } >"${TEST_TEMP_DIR}/chart/templates/invalid.yaml"
+
+    # shellcheck disable=SC2030 disable=SC2031
+    run env HELM_SECRETS_DEC_TMP_DIR="${TEST_TEMP_DIR}/tmp" WSLENV="HELM_SECRETS_DEC_TMP_DIR/p:${WSLENV:-}" \
+        "${HELM_BIN}" secrets --evaluate-templates template "${TEST_TEMP_DIR}/chart" 2>&1
+
+    assert_output --partial "[helm-secrets] vals error: expand file://${TEST_TEMP_DIR}/non-exists.txt"
+    assert_failure
+}
+
 @test "template: helm template w/ chart + --evaluate-templates true + invalid syntax" {
     if on_wsl || ! is_backend "vals"; then
         skip
@@ -1888,7 +2216,11 @@ key2: value" 2>&1
     refute_output --partial 'config.env: "44"'
     refute_output --partial 'secret: "42"'
     refute_output --partial 'secret.env: "44"'
-    assert_output --partial 'vals error:'
+    if helm_version_greater_or_equal_than 4.0.0; then
+        assert_output --partial 'plugin "secrets-post-renderer" exited with error'
+    else
+        assert_output --partial 'vals error:'
+    fi
     assert_failure
 }
 
@@ -2040,6 +2372,110 @@ key2: value" 2>&1
     assert_failure
 }
 
+@test "template: helm template w/ chart + wrapper + out-of-tree-backend.sh!secrets.yaml is not sourced" {
+    if on_windows; then
+        # MSYS converts the leading /path of the argument to C:/..., which breaks the allow-list and assertions.
+        skip
+    fi
+
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+    BACKEND_PATH="${TEST_TEMP_DIR}/out-of-tree-backend.sh"
+    printf 'echo BACKEND_SOURCED >&2\n' >"${BACKEND_PATH}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" -f "${BACKEND_PATH}!${VALUES_PATH}" 2>&1
+
+    refute_output --partial "BACKEND_SOURCED"
+    assert_output --partial "out-of-tree secret backend '${BACKEND_PATH}' is not allowed via the 'backend!' prefix"
+    assert_failure
+}
+
+@test "template: helm template w/ chart + wrapper --set out-of-tree-backend.sh!value is not sourced" {
+    if on_windows; then
+        # MSYS converts the leading /path of the argument to C:/..., which breaks the allow-list and assertions.
+        skip
+    fi
+
+    BACKEND_PATH="${TEST_TEMP_DIR}/out-of-tree-backend.sh"
+    printf 'echo BACKEND_SOURCED >&2\n' >"${BACKEND_PATH}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" --set "service.port=${BACKEND_PATH}!87" 2>&1
+
+    refute_output --partial "BACKEND_SOURCED"
+    assert_output --partial "out-of-tree secret backend '${BACKEND_PATH}' is not allowed via the 'backend!' prefix"
+    assert_failure
+}
+
+@test "template: helm template w/ chart + secrets://out-of-tree-backend.sh!secrets.yaml is not sourced" {
+    VALUES="assets/values/${HELM_SECRETS_BACKEND}/secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+    BACKEND_PATH="${TEST_TEMP_DIR}/out-of-tree-backend.sh"
+    printf 'echo BACKEND_SOURCED >&2\n' >"${BACKEND_PATH}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" template "$(_winpath "${TEST_TEMP_DIR}/chart")" -f "secrets://${BACKEND_PATH}!${VALUES_PATH}" 2>&1
+
+    refute_output --partial "BACKEND_SOURCED"
+    assert_output --partial "out-of-tree secret backend '${BACKEND_PATH}' is not allowed via the 'backend!' prefix"
+    assert_failure
+    assert_file_not_exists "${VALUES_PATH}.dec"
+}
+
+@test "template: helm template w/ chart + --set-file secrets+literal://out-of-tree-backend.sh! is not sourced" {
+    BACKEND_PATH="${TEST_TEMP_DIR}/out-of-tree-backend.sh"
+    printf 'echo BACKEND_SOURCED >&2\n' >"${BACKEND_PATH}"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" template "$(_winpath "${TEST_TEMP_DIR}/chart")" \
+        --set-file "service.port=secrets+literal://${BACKEND_PATH}!ref+echo://87" 2>&1
+
+    refute_output --partial "BACKEND_SOURCED"
+    assert_output --partial "out-of-tree secret backend '${BACKEND_PATH}' is not allowed via the 'backend!' prefix"
+    assert_failure
+}
+
+@test "template: helm template w/ chart + secrets://custom-backend.sh!secrets.yaml + HELM_SECRETS_ALLOWED_BACKENDS" {
+    VALUES="assets/values/custom-backend/secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+    BACKEND_PATH="${TEST_TEMP_DIR}/assets/custom-backend.sh"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    # shellcheck disable=SC2030 disable=SC2031
+    run env HELM_SECRETS_ALLOWED_BACKENDS="sops,vals,noop,${BACKEND_PATH}" WSLENV="HELM_SECRETS_ALLOWED_BACKENDS:${WSLENV}" \
+        "${HELM_BIN}" template "$(_winpath "${TEST_TEMP_DIR}/chart")" -f "secrets://${BACKEND_PATH}!${VALUES_PATH}" 2>&1
+
+    assert_output --partial "port: secret/production#port"
+    assert_success
+}
+
+@test "template: helm template w/ chart + wrapper + custom-backend.sh!secrets.yaml + HELM_SECRETS_ALLOWED_BACKENDS" {
+    if on_windows; then
+        # MSYS converts the leading /path of the argument to C:/..., which breaks the allow-list and assertions.
+        skip
+    fi
+
+    VALUES="assets/values/custom-backend/secrets.yaml"
+    VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
+    BACKEND_PATH="${TEST_TEMP_DIR}/assets/custom-backend.sh"
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    # shellcheck disable=SC2030 disable=SC2031
+    run env HELM_SECRETS_ALLOWED_BACKENDS="sops,vals,noop,${BACKEND_PATH}" WSLENV="HELM_SECRETS_ALLOWED_BACKENDS:${WSLENV}" \
+        "${HELM_BIN}" secrets template "${TEST_TEMP_DIR}/chart" -f "${BACKEND_PATH}!${VALUES_PATH}" 2>&1
+
+    assert_output --partial "port: secret/production#port"
+    assert_success
+    assert_file_not_exists "${VALUES_PATH}.dec"
+}
+
 @test "template: helm template w/ chart + secrets://sops!secrets.yaml + --set-file secrets://sops!file.txt" {
     VALUES="assets/values/sops/secrets.yaml"
     VALUES_PATH="${TEST_TEMP_DIR}/${VALUES}"
@@ -2116,7 +2552,7 @@ key2: value" 2>&1
     assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
     assert_output --partial "port: 81"
     refute_output -e "\[helm-secrets\] Removed: .*${VALUES}.dec"
-    assert_output -e "\[helm-secrets\] Removed: .*/secrets.yaml.dec"
+    assert_output -e "\[helm-secrets\] Removed: .*secrets.yaml.dec"
     assert_success
     assert_file_not_exists "${VALUES_PATH}.dec"
 }
@@ -2132,7 +2568,7 @@ key2: value" 2>&1
     assert_output -e "\[helm-secrets\] Decrypt: .*${VALUES}"
     assert_output --partial "port: 81"
     refute_output -e "\[helm-secrets\] Removed: .*${VALUES}.dec"
-    assert_output -e "\[helm-secrets\] Removed: .*/secrets.yaml.dec"
+    assert_output -e "\[helm-secrets\] Removed: .*secrets.yaml.dec"
     assert_success
     assert_file_not_exists "${VALUES_PATH}.dec"
 }
@@ -2185,6 +2621,19 @@ key2: value" 2>&1
     assert_output --partial "- '\"de\"'"
     assert_output --partial "- '\"zh\"'"
     assert_output --partial "- '\"ko\"'"
+    assert_success
+}
+
+@test "template: helm template w/ chart + --set podAnnotations.second=fr\,en\,de\,zh\,ko with escaped comma" {
+    if on_windows || on_wsl; then
+        skip
+    fi
+
+    create_chart "${TEST_TEMP_DIR}"
+
+    run "${HELM_BIN}" secrets template --set 'podAnnotations.second=fr\,en\,de\,zh\,ko' "${TEST_TEMP_DIR}/chart" 2>&1
+
+    assert_output --partial "second: fr,en,de,zh,ko"
     assert_success
 }
 

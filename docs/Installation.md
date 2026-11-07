@@ -2,9 +2,61 @@
 
 # Using Helm plugin manager
 
-Install a specific version (recommend). Click [here](https://github.com/jkroepke/helm-secrets/releases/latest) for latest version.
+## Helm 4
+
+Helm 4 introduced a plugin system that requires splitting plugins into multiple packages when they have multiple capabilities. Therefore, `helm-secrets` is now distributed as three separate plugins:
+- `helm-secrets`: The core plugin that provides the main functionality.
+- `helm-secrets-getter`: A plugin that adds support for secret getters, e.g. `secrets://`.
+- `helm-secrets-post-renderer`: A plugin that adds support for post-rendering.
+
+### Verification
+
+Verification of plugins is supported in Helm 4 and **enabled by default**. You can choose 
+to verify the plugins during installation by omitting the `--verify=false` flag.
+
+Public Key for verification can be found here: https://github.com/jkroepke.gpg
+
+### Install a specific version (recommend).
+
+The `--version` flag is not supported in Helm 4, so you need to specify the exact download URL for the desired version.
+
+Click [here](https://github.com/jkroepke/helm-secrets/releases/latest) for the latest version.
+
 ```bash
-helm plugin install https://github.com/jkroepke/helm-secrets --version v4.6.0
+helm plugin install https://github.com/jkroepke/helm-secrets/releases/download/v4.7.4/secrets-4.7.4.tgz
+helm plugin install https://github.com/jkroepke/helm-secrets/releases/download/v4.7.4/secrets-getter-4.7.4.tgz
+helm plugin install https://github.com/jkroepke/helm-secrets/releases/download/v4.7.4/secrets-post-renderer-4.7.4.tgz
+```
+
+Helm 4 can also install plugins from OCI registries by using a specific version tag:
+
+```bash
+helm plugin install oci://ghcr.io/jkroepke/helm-secrets/secrets:4.7.4
+helm plugin install oci://ghcr.io/jkroepke/helm-secrets/secrets-getter:4.7.4
+helm plugin install oci://ghcr.io/jkroepke/helm-secrets/secrets-post-renderer:4.7.4
+```
+
+
+### Install latest version
+
+Helm forces `<plugin-name>-<version>.tgz` naming convention for plugin packages. 
+Therefore, to install the latest version,
+you need to fetch the latest version number first and then construct the download URLs accordingly.
+
+Alternatively, install the `latest` tag from the OCI registry:
+
+```bash
+helm plugin install oci://ghcr.io/jkroepke/helm-secrets/secrets:latest
+helm plugin install oci://ghcr.io/jkroepke/helm-secrets/secrets-getter:latest
+helm plugin install oci://ghcr.io/jkroepke/helm-secrets/secrets-post-renderer:latest
+```
+
+## Helm 3
+
+Install a specific version (recommend). 
+Click [here](https://github.com/jkroepke/helm-secrets/releases/latest) for the latest version.
+```bash
+helm plugin install https://github.com/jkroepke/helm-secrets --version v4.7.10
 ```
 
 Install latest unstable version from main branch
@@ -17,6 +69,8 @@ Find the latest version here: https://github.com/jkroepke/helm-secrets/releases/
 See [Secret Backend manual](https://github.com/jkroepke/helm-secrets/wiki/Secret-Backends#list-of-implemented-secret-backends) for additional installation tasks.
 
 # Manual installation
+
+Works for Helm 2 and Helm 3.
 
 ## Latest version
 
