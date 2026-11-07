@@ -24,25 +24,40 @@ Typical usage:
 EOF
 }
 
-decrypted_file_list=$(_mktemp)
+decrypted_file_list_dir=$(_mktemp -d)
+post_renderer_stderr=""
 
 _trap_hook() {
-    if [ -s "${decrypted_file_list}" ]; then
-        if [ "${QUIET}" = "false" ]; then
-            echo >&2
-            # shellcheck disable=SC2016
-            xargs -0 -n1 sh -c 'rm "$1" && printf "[helm-secrets] Removed: %s\n" "$1"' sh >&2 <"${decrypted_file_list}"
-        else
-            xargs -0 rm >&2 <"${decrypted_file_list}"
-        fi
+    if [ -d "${decrypted_file_list_dir}" ]; then
+        set +f # Enable globbing
+        for file in "${decrypted_file_list_dir}"/*.file; do
+            set -f # Disable globbing
 
-        rm "${decrypted_file_list}"
+            if [ -e "$file" ]; then # Make sure it isn't an empty match, in case of no files
+                decrypted_file=$(cat "$file")
+                rm -- "$(printf '%s' "$decrypted_file")"
+
+                if [ "${QUIET}" = "false" ]; then
+                    printf "[helm-secrets] Removed: %s\n" "$decrypted_file" >&2
+                fi
+            fi
+        done
+
+        rm -rf "${decrypted_file_list_dir}"
+    fi
+
+    if [ -n "${post_renderer_stderr}" ]; then
+        rm -f "${post_renderer_stderr}"
     fi
 }
 
 helm_wrapper() {
     argc=$#
     j=0
+
+    # Remember the configured value, so a '?' prefix on one value file does not
+    # leak into the handling of the following files.
+    _ignore_missing_values_default="${IGNORE_MISSING_VALUES}"
 
     while [ $j -lt $argc ]; do
         case "$1" in
@@ -78,7 +93,11 @@ helm_wrapper() {
 
                 case "${literal}" in
                 *\\)
-                    _literal="${literal}"
+                    if [ "${_literal}" != "" ]; then
+                        _literal="${_literal},${literal}"
+                    else
+                        _literal="${literal}"
+                    fi
                     continue
                     ;;
                 esac
@@ -111,8 +130,8 @@ helm_wrapper() {
 
                 # Force secret backend
                 if [ "${literal#*!}" != "${literal}" ]; then
-                    if is_secret_backend "${literal%%\!*}"; then
-                        load_secret_backend "${literal%%\!*}"
+                    if is_secret_backend "${literal%%\!*}" || [ -f "${literal%%\!*}" ]; then
+                        load_secret_backend_override "${literal%%\!*}"
                         literal="${literal#*!}"
                     else
                         load_secret_backend "${DEFAULT_SECRET_BACKEND}"
@@ -121,9 +140,26 @@ helm_wrapper() {
                     load_secret_backend "${DEFAULT_SECRET_BACKEND}"
                 fi
 
-                if ! decrypted_literal=$(backend_decrypt_literal "${literal}"); then
+                # Command substitution strips trailing newline characters from the captured output.
+                #
+                # Append a sentinel character after the command output and remove it again
+                # after command substitution. Because the captured output no longer ends with
+                # a newline, the shell keeps the original trailing newlines.
+                #
+                # Keep the original exit code from backend_decrypt_literal. Otherwise, the
+                # sentinel printf would be the last command in the substitution and could hide
+                # a decrypt failure.
+                if ! decrypted_literal=$(
+                    backend_decrypt_literal "${literal}"
+                    status=$?
+                    printf '.'
+                    exit "$status"
+                ); then
                     fatal 'Unable to decrypt literal value %s' "${literal}"
                 fi
+
+                # Remove only the sentinel character appended above.
+                decrypted_literal=${decrypted_literal%.}
 
                 if [ "${decrypted_literal}" = "${literal}" ]; then
                     decrypted_literals="${decrypted_literals}${opt_prefix}${decrypted_literal},"
@@ -157,8 +193,13 @@ helm_wrapper() {
             IFS='
 '
 
-            for file in $(printf '%s' "${files}" | sed -E 's/([^\\]),/\1\n/g'); do
+            # Split on unescaped commas. The replacement uses a literal newline,
+            # because BSD sed (macOS) does not understand '\n' in the replacement.
+            for file in $(printf '%s' "${files}" | sed -E 's/([^\\]),/\1\
+/g'); do
                 unset IFS
+
+                IGNORE_MISSING_VALUES="${_ignore_missing_values_default}"
 
                 case "$_1" in
                 -f | --values | --values=?*)
@@ -182,8 +223,8 @@ helm_wrapper() {
 
                 # Force secret backend
                 if [ "${file#*!}" != "${file}" ]; then
-                    if is_secret_backend "${file%%\!*}"; then
-                        load_secret_backend "${file%%\!*}"
+                    if is_secret_backend "${file%%\!*}" || [ -f "${file%%\!*}" ]; then
+                        load_secret_backend_override "${file%%\!*}"
                         file="${file#*!}"
                     else
                         load_secret_backend "${DEFAULT_SECRET_BACKEND}"
@@ -191,6 +232,13 @@ helm_wrapper() {
                 else
                     load_secret_backend "${DEFAULT_SECRET_BACKEND}"
                 fi
+
+                case "${file}" in
+                secrets://*)
+                    decrypted_files="${decrypted_files}${opt_prefix}${file},"
+                    continue
+                    ;;
+                esac
 
                 if ! real_file=$(_file_get "${file}"); then
                     if [ "${IGNORE_MISSING_VALUES}" = "true" ]; then
@@ -209,7 +257,7 @@ helm_wrapper() {
                     fi
                 else
                     if decrypt_helper "${real_file}" "${sops_type}"; then
-                        printf '%s\0' "${file_dec}" >>"${decrypted_file_list}"
+                        printf '%s' "${file_dec}" >"${decrypted_file_list_dir}/${j}.file"
 
                         if [ "${QUIET}" = "false" ]; then
                             log 'Decrypt: %s' "${file}"
@@ -238,14 +286,21 @@ helm_wrapper() {
         j=$((j + 1))
     done
 
-    if [ "${EVALUATE_TEMPLATES}" = "true" ]; then
-        set -- "$@" "--post-renderer" "${HELM_BIN}"
+    unset HELM_SECRETS_POST_RENDERER_STDERR
 
-        if [ "${HELM_DEBUG:-}" = "1" ] || [ "${HELM_DEBUG:-}" = "true" ] || [ -n "${HELM_SECRETS_DEBUG+x}" ]; then
-            set -- "$@" "--post-renderer-args" "--debug"
+    if [ "${EVALUATE_TEMPLATES}" = "true" ]; then
+        if [ "$(_helm_version)" = "3" ]; then
+            set -- "$@" "--post-renderer" "${HELM_BIN}"
+
+            if [ "${HELM_DEBUG:-}" = "1" ] || [ "${HELM_DEBUG:-}" = "true" ] || [ -n "${HELM_SECRETS_DEBUG+x}" ]; then
+                set -- "$@" "--post-renderer-args" "--debug"
+            fi
+
+            set -- "$@" "--post-renderer-args" "secrets"
+        else
+            set -- "$@" "--post-renderer" "secrets-post-renderer"
         fi
 
-        set -- "$@" "--post-renderer-args" "secrets"
         set -- "$@" "--post-renderer-args" "--backend" "--post-renderer-args" "${SECRET_BACKEND}"
         if [ "${SECRET_BACKEND_ARGS}" != "" ]; then
             set -- "$@" "--post-renderer-args" "--backend-args" "--post-renderer-args" "${SECRET_BACKEND_ARGS}"
@@ -254,9 +309,32 @@ helm_wrapper() {
             set -- "$@" "--post-renderer-args" "--evaluate-templates-decode-secrets"
         fi
         set -- "$@" "--post-renderer-args" "post-renderer"
+
+        # Helm 4 discards the stderr of post-renderer plugins and only reports
+        # 'plugin "secrets-post-renderer" exited with error'. Let the post-renderer
+        # write its stderr to a file and forward it after helm exits.
+        # The file is created next to TMPDIR, since the post-renderer removes
+        # TMPDIR on exit if it is shared through HELM_SECRETS_DEC_TMP_DIR.
+        if [ "$(_helm_version)" != "3" ]; then
+            post_renderer_stderr="$(mktemp "${TMPDIR%/}.post-renderer.XXXXXX")"
+            HELM_SECRETS_POST_RENDERER_STDERR="${post_renderer_stderr}"
+            WSLENV="HELM_SECRETS_POST_RENDERER_STDERR/p:${WSLENV:-}"
+            export HELM_SECRETS_POST_RENDERER_STDERR WSLENV
+        fi
     fi
 
-    "${HELM_BIN}" ${TILLER_HOST:+--host "$TILLER_HOST"} "$@"
+    exit_code=0
+    "${HELM_BIN}" ${TILLER_HOST:+--host "$TILLER_HOST"} "$@" || exit_code=$?
+
+    if [ -n "${post_renderer_stderr}" ]; then
+        if [ -s "${post_renderer_stderr}" ]; then
+            cat "${post_renderer_stderr}" >&2
+        fi
+
+        rm -f "${post_renderer_stderr}"
+    fi
+
+    return "${exit_code}"
 }
 
 helm_command() {

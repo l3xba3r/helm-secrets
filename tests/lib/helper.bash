@@ -11,13 +11,17 @@ setup() {
         export TEST_TEMP_DIR
 
         # copy assets
-        cp -a "${TEST_ROOT}/assets" "${TEST_TEMP_DIR}/"
-        if ! on_windows; then
+        cp -rP "${TEST_ROOT}/assets" "${TEST_TEMP_DIR}/"
+        if on_windows; then
+            # shellcheck disable=SC2016
+            SPECIAL_CHAR_DIR="${TEST_TEMP_DIR}/$(printf '%s' 'a b')"
+        else
             # shellcheck disable=SC2016
             SPECIAL_CHAR_DIR="${TEST_TEMP_DIR}/$(printf '%s' 'a@b§c!d\$e \f(g)h=i^j😀')"
-            mkdir "${SPECIAL_CHAR_DIR}"
-            cp -a "${TEST_ROOT}/assets" "${SPECIAL_CHAR_DIR}/"
         fi
+
+        mkdir "${SPECIAL_CHAR_DIR}"
+        cp -rP "${TEST_ROOT}/assets" "${SPECIAL_CHAR_DIR}/"
 
         ln -s "${TEST_ROOT}/assets/values/sops/.sops.yaml" "${TEST_TEMP_DIR}"
     } >&2
@@ -65,6 +69,18 @@ on_wsl() {
 
 on_cygwin() {
     [[ "${_uname}" == "CYGWIN"* ]]
+}
+
+helm_version() {
+    "${HELM_BIN}" version --short | sed 's/[^0-9.]*\([0-9.]*\).*/\1/'
+}
+
+helm_version_less_than() {
+    [ "$(printf '%s\n%s\n' "$(helm_version)" "$1" | sort -V | head -n1)" != "$1" ]
+}
+
+helm_version_greater_or_equal_than() {
+    [ "$(printf '%s\n%s\n' "$(helm_version)" "$1" | sort -V | head -n1)" == "$1" ]
 }
 
 _winpath() {

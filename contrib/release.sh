@@ -8,7 +8,7 @@ sedi() {
     fi
 }
 
-if [ $# -lt 2 ] || [[ ! "${1}" =~ ^[0-9]\.[0-9]+\.[0-9]+$ ]] || [[ ! "${2}" =~ ^[0-9]\.[0-9]+\.[0-9]+$ ]]; then
+if [ $# -lt 2 ] || [[ ! "${1}" =~ ^[0-9]\.[0-9]+\.[0-9]+ ]] || [[ ! "${2}" =~ ^[0-9]\.[0-9]+\.[0-9]+$ ]]; then
     echo "Missing arguments."
     echo "$0 1.1.0 1.2.0"
     exit 1
@@ -31,10 +31,16 @@ if [ "$LOCAL" != "$REMOTE" ]; then
 fi
 
 sedi "s/version:.*/version: \"${1}\"/" "$(git rev-parse --show-toplevel)/plugin.yaml"
+sedi "s/version:.*/version: \"${1}\"/" "$(git rev-parse --show-toplevel)/plugins/helm-secrets-cli/plugin.yaml"
+sedi "s/version:.*/version: \"${1}\"/" "$(git rev-parse --show-toplevel)/plugins/helm-secrets-getter/plugin.yaml"
+sedi "s/version:.*/version: \"${1}\"/" "$(git rev-parse --show-toplevel)/plugins/helm-secrets-post-renderer/plugin.yaml"
 git commit -am "Release v${1}"
 git tag --annotate -m "Release v${1}" "v${1}"
 
 sedi "s/version:.*/version: \"${2}-dev\"/" "$(git rev-parse --show-toplevel)/plugin.yaml"
+sedi "s/version:.*/version: \"${2}-dev\"/" "$(git rev-parse --show-toplevel)/plugins/helm-secrets-cli/plugin.yaml"
+sedi "s/version:.*/version: \"${2}-dev\"/" "$(git rev-parse --show-toplevel)/plugins/helm-secrets-getter/plugin.yaml"
+sedi "s/version:.*/version: \"${2}-dev\"/" "$(git rev-parse --show-toplevel)/plugins/helm-secrets-post-renderer/plugin.yaml"
 git commit -am "Set next version"
 
 git push --follow-tags --atomic

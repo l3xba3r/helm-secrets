@@ -3,9 +3,13 @@ name: CI
 
 env:
   WSLENV: "HELM_SECRETS_BACKEND:BATS_REPORT_FILENAME:BATS_TEST_NAME_PREFIX"
-  VERSION_HELM: v3.12.3
-  VERSION_SOPS: v3.8.1
-  VERSION_VALS: v0.26.2
+  # renovate: github-releases=helm/helm
+  VERSION_HELM: 4.3.1
+  # renovate: github-releases=getsops/sops
+  VERSION_SOPS: 3.13.3
+  # renovate: github-releases=helmfile/vals
+  VERSION_VALS: 0.50.0
+  SOPS_DISABLE_VERSION_CHECK: "true"
 
 on:
   pull_request:
@@ -16,13 +20,31 @@ on:
       - 'docs/**'
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[ci skip]')"
+  detect-changes:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.set-output.outputs.changed }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: set-output
+        name: Detect changes
+        shell: bash
+        run: |
+          echo "changed=$(git diff --name-only origin/${{ github.base_ref }} ${{ github.sha }} -- scripts/ tests/ .github/workflows/ci.yaml | wc -l)" >> $GITHUB_OUTPUT
+
+  lint:
+    runs-on: ubuntu-26.04
+    needs: detect-changes
+    if: "(needs.detect-changes.outputs.changed != '0' || github.event_name == 'push')"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run the sh-checker
-        uses: luizm/action-sh-checker@v0.8.0
+        uses: luizm/action-sh-checker@883217215b11c1fabbf00eb1a9a041f62d74c744 # v0.10.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHELLCHECK_OPTS: -x
@@ -31,7 +53,7 @@ jobs:
           sh_checker_exclude: "tests/assets tests/bats"
 
       - name: Run the sh-checker
-        uses: luizm/action-sh-checker@v0.8.0
+        uses: luizm/action-sh-checker@883217215b11c1fabbf00eb1a9a041f62d74c744 # v0.10.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHELLCHECK_OPTS: -x
@@ -44,53 +66,78 @@ jobs:
 
   unit-tests:
     runs-on: ${{ matrix.os }}
+    if: "(needs.detect-changes.outputs.changed != '0' || github.event_name == 'push')"
+    needs: detect-changes
     container: ${{ matrix.container }}
     env:
       HELM_SECRETS_WINDOWS_SHELL: ${{ matrix.shell == 'wsl' && 'wsl' || 'bash' }}
-    if: "!contains(github.event.head_commit.message, '[ci skip]')"
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-24.04]
         container: [""]
         shell: [dash]
         jobs: [4]
+        helm-version: [""]
         include:
-          - os: windows-latest
+          - os: windows-2025
             shell: bash
             jobs: 1
-          - os: windows-latest
+            helm-version: 3.21.0
+          - os: windows-2025
             shell: cygwin
             jobs: 1
-          - os: windows-latest
+            helm-version: 3.21.0
+          - os: windows-2025
             shell: wsl
             jobs: 4
-          - os: macos-latest
+            helm-version: 3.21.0
+          - os: macos-15
             shell: bash 3.2
             jobs: 4
-          - os: macos-latest
+          - os: macos-15
             shell: bash 3.2 with coreutils
             jobs: 4
-          #- os: ubuntu-latest
-          #  container: centos:7
-          #  shell: bash 4.2
-          #  jobs: 4
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             container: registry.access.redhat.com/ubi8/ubi-minimal
             shell: bash 4.4
             jobs: 4
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
+            container: registry.access.redhat.com/ubi9/ubi-minimal
+            shell: bash 4.4
+            jobs: 4
+          - os: ubuntu-24.04
+            container: registry.access.redhat.com/ubi10/ubi-minimal
+            shell: bash 4.4
+            jobs: 4
+          - os: ubuntu-24.04
+            shell: bash
+            jobs: 4
+            helm-version: 3.9.4
+          - os: ubuntu-24.04
+            shell: bash
+            jobs: 4
+            helm-version: 3.16.4
+          - os: ubuntu-24.04
+            shell: bash
+            jobs: 4
+            helm-version: 3.21.0
+          - os: ubuntu-24.04
             container: alpine
             shell: zsh
             jobs: 4
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             container: alpine
             shell: ash
             jobs: 4
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             container: ubuntu:22.04
             shell: posh
+            jobs: 4
+          - os: ubuntu-24.04
+            container: ubuntu:26.04
+            shell: bash
             jobs: 4
     steps:
       - name: Install dependencies
@@ -112,8 +159,11 @@ jobs:
             if [ "$(rpm -E %{rhel})" == "7" ]; then
               echo -e '[copr:copr.fedorainfracloud.org:jkroepke:git]\nname=Copr repo for git owned by jkroepke\nbaseurl=https://download.copr.fedorainfracloud.org/results/jkroepke/git/epel-7-$basearch/\ntype=rpm-md\nenabled=0\ngpgcheck=1\ngpgkey=https://download.copr.fedorainfracloud.org/results/jkroepke/git/pubkey.gpg\nrepo_gpgcheck=0\nenabled=1\nenabled_metadata=1' > /etc/yum.repos.d/jkroepke-git.repo
             fi
-            echo -e '[epel]\nname=Extra Packages for Enterprise Linux $releasever - $basearch\nmetalink=https://mirrors.fedoraproject.org/metalink?repo=epel-$releasever&arch=$basearch&infra=$infra&content=$contentdir\nenabled=1\ngpgcheck=1\ngpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-8' > /etc/yum.repos.d/epel.repo
-            microdnf install --nodocs git-core unzip tar findutils diffutils parallel
+            echo -e '[epel]\nname=Extra Packages for Enterprise Linux $releasever - $basearch\nmetalink=https://mirrors.fedoraproject.org/metalink?repo=epel-$releasever&arch=$basearch&infra=$infra&content=$contentdir\nenabled=1\ngpgcheck=1\ngpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-'$(rpm -E %{rhel}) > /etc/yum.repos.d/epel.repo
+            microdnf install -y --nodocs git-core unzip tar findutils diffutils parallel gnupg2
+          
+            # remove xargs from RHEL image to keep compatibility with OpenShift GitOps
+            rm -f "$(which xargs)"
           fi
 
       - name: Install zsh
@@ -128,40 +178,43 @@ jobs:
         run: |-
           git config --global core.autocrlf false
           git config --global core.eol lf
-        if: "contains(matrix.os, 'windows-latest')"
+        if: "contains(matrix.os, 'windows')"
 
       # this is to fix https://github.com/actions/checkout/issues/760
       - run: git config --global --add safe.directory /__w/helm-secrets/helm-secrets
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: Setup Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: ${{ env.VERSION_HELM }}
+          version: v${{ matrix.helm-version != '' && matrix.helm-version || env.VERSION_HELM }}
 
       - name: Setup Sops
-        uses: mdgreenwald/mozilla-sops-action@v1.6.0
+        uses: jkroepke/setup-sops@d7c8049a41660f6d744f3e1f520145ced869cae8 # v1.5.83
         with:
           version: ${{ env.VERSION_SOPS }}
 
       - name: Setup vals
-        uses: jkroepke/setup-vals@v1.1.3
+        uses: jkroepke/setup-vals@e161e238245a4c38151a2fbc108de46600c33d39 # v1.5.113
         with:
-          version: ${{ env.VERSION_VALS }}
+          version: v${{ env.VERSION_VALS }}
 
       - name: Setup Cygwin
         if: "contains(matrix.shell, 'cygwin')"
-        uses: cygwin/cygwin-install-action@v4
+        uses: cygwin/cygwin-install-action@3f0a3f9f988f7e96b8c18098ae05eaec175f5b52 # v6.0.2
         with:
           platform: x64
           packages: gnupg2
 
       - name: Setup WSL
         if: "contains(matrix.shell, 'wsl')"
-        uses: Vampire/setup-wsl@v3
+        uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7.2.0
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: 1
 
       - name: Setup coreutils
         if: "contains(matrix.shell, 'coreutils')"
@@ -170,7 +223,7 @@ jobs:
           echo "/usr/local/opt/coreutils/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Setup parallel (mac OS)
-        if: "contains(matrix.os, 'macos-latest')"
+        if: "contains(matrix.os, 'macos')"
         run: brew install parallel
 
       - name: Setup parallel (WSL)
@@ -178,6 +231,7 @@ jobs:
         run: wsl bash -c 'apt-get update -qq && apt-get install -yqq parallel'
 
       - name: Print Environment
+        continue-on-error: true
         run: |-
           bash -c 'echo "Shell: $(readlink /bin/sh || readlink /var/select/sh || echo unknown)"'
           bash tests/bats/core/bin/bats -v
@@ -185,13 +239,8 @@ jobs:
           gpg --version
           vals version
 
-      - name: Print Environment (Windows)
-        if: "contains(matrix.os, 'windows-latest')"
-        run: |-
-          scripts/wrapper/sh.cmd --version
-          scripts/wrapper/sh.cmd -c -- "uname -a"
-
       - name: Run helm-secrets w/o bats
+        if: ${{ startsWith(matrix.helm-version, '3') }}
         run: |-
           helm plugin install "${{ github.event_name == 'pull_request'
             && format('{0}/{1}', github.server_url, github.event.pull_request.head.repo.full_name)
@@ -200,9 +249,29 @@ jobs:
             && github.head_ref
             || github.ref
           }}"
+          helm plugin list
+          helm secrets -v
+
+      - name: Run helm-secrets w/o bats
+        if: ${{ !startsWith(matrix.helm-version, '3') || matrix.helm-version == '' }}
+        run: |-
+          helm plugin install plugins/helm-secrets-cli
+          helm plugin install plugins/helm-secrets-getter
+          helm plugin install plugins/helm-secrets-post-renderer
+          helm plugin list
           helm secrets -v
 
       - name: HELM_SECRETS_BACKEND=sops bats --tap -r tests/unit
+        id: sops
+        continue-on-error: true
+        run: ${{ contains(matrix.shell, 'wsl') && 'wsl' || '' }} bash tests/bats/core/bin/bats --jobs ${{ matrix.jobs }} --timing --tap --report-formatter junit -r tests/unit
+        env:
+          HELM_SECRETS_BACKEND: sops
+          BATS_TEST_NAME_PREFIX: "[${{ matrix.os }}|${{ matrix.shell }}|sops] "
+          BATS_REPORT_FILENAME: TEST-sops.xml
+
+      - name: HELM_SECRETS_BACKEND=sops bats --tap -r tests/unit (retry)
+        if: steps.sops.outcome == 'failure'
         run: ${{ contains(matrix.shell, 'wsl') && 'wsl' || '' }} bash tests/bats/core/bin/bats --jobs ${{ matrix.jobs }} --timing --tap --report-formatter junit -r tests/unit
         env:
           HELM_SECRETS_BACKEND: sops
@@ -211,6 +280,16 @@ jobs:
 
       - name: HELM_SECRETS_BACKEND=vals bats --tap -r tests/unit
         if: "!contains(matrix.shell, 'cygwin')"
+        id: vals
+        continue-on-error: true
+        run: ${{ contains(matrix.shell, 'wsl') && 'wsl' || '' }} bash tests/bats/core/bin/bats --jobs ${{ matrix.jobs }} --timing --tap --report-formatter junit -r tests/unit
+        env:
+          HELM_SECRETS_BACKEND: vals
+          BATS_TEST_NAME_PREFIX: "[${{ matrix.os }}|${{ matrix.shell }}|vals] "
+          BATS_REPORT_FILENAME: TEST-vals.xml
+
+      - name: HELM_SECRETS_BACKEND=vals bats --tap -r tests/unit  (retry)
+        if: "!contains(matrix.shell, 'cygwin') && steps.vals.outcome == 'failure'"
         run: ${{ contains(matrix.shell, 'wsl') && 'wsl' || '' }} bash tests/bats/core/bin/bats --jobs ${{ matrix.jobs }} --timing --tap --report-formatter junit -r tests/unit
         env:
           HELM_SECRETS_BACKEND: vals
@@ -218,7 +297,7 @@ jobs:
           BATS_REPORT_FILENAME: TEST-vals.xml
 
       - name: Upload Test Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: junit-test-results-${{ strategy.job-index }}
@@ -226,36 +305,37 @@ jobs:
           retention-days: 1
 
   coverage:
-    runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[ci skip]')"
+    runs-on: ubuntu-26.04
+    if: "(needs.detect-changes.outputs.changed != '0' || github.event_name == 'push')"
+    needs: detect-changes
     env:
       BATSLIB_TEMP_PRESERVE: "0"
       BATSLIB_TEMP_PRESERVE_ON_FAILURE: "0"
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           fetch-depth: 0
 
       - name: Setup Ruby 3.0
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@26e5b7d197ebf60545ee9667bcbace0be11ccaec # v1.334.0
         with:
-          ruby-version: "3.0"
+          ruby-version: "4.0.9"
 
       - name: Setup Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: ${{ env.VERSION_HELM }}
+          version: v${{ env.VERSION_HELM }}
 
       - name: Setup Sops
-        uses: mdgreenwald/mozilla-sops-action@v1.6.0
+        uses: jkroepke/setup-sops@d7c8049a41660f6d744f3e1f520145ced869cae8 # v1.5.83
         with:
           version: ${{ env.VERSION_SOPS }}
 
       - name: Setup vals
-        uses: jkroepke/setup-vals@v1.1.3
+        uses: jkroepke/setup-vals@e161e238245a4c38151a2fbc108de46600c33d39 # v1.5.113
         with:
-          version: ${{ env.VERSION_VALS }}
+          version: v${{ env.VERSION_VALS }}
 
       - name: Install bashcov
         run: bundle install
@@ -276,6 +356,15 @@ jobs:
         env:
           HELM_SECRETS_BACKEND: sops
           BASHCOV_COMMAND_NAME: helm-secrets:sops
+        id: sops
+        continue-on-error: true
+
+      - name: bashcov bats --tap -r tests/unit (retry)
+        if: steps.sops.outcome == 'failure'
+        run: bashcov -- tests/bats/core/bin/bats --tap -r tests/unit
+        env:
+          HELM_SECRETS_BACKEND: sops
+          BASHCOV_COMMAND_NAME: helm-secrets:sops
 
       - name: bashcov bats --tap -r tests/unit
         run: bashcov -- tests/bats/core/bin/bats --tap -r tests/unit
@@ -283,7 +372,7 @@ jobs:
           HELM_SECRETS_BACKEND: vals
           BASHCOV_COMMAND_NAME: helm-secrets:vals
 
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: ./coverage/coverage.xml
           fail_ci_if_error: true
@@ -292,14 +381,14 @@ jobs:
 
       - run: rm -rf ./coverage/
 
-      - uses: helm/kind-action@v1.10.0
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
 
       - name: bashcov bats --tap -r tests/it
         run: bashcov -- tests/bats/core/bin/bats --tap -r tests/it
         env:
           BASHCOV_COMMAND_NAME: helm-secrets:it
 
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: ./coverage/coverage.xml
           fail_ci_if_error: true
@@ -307,38 +396,39 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   integration-tests:
-    runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[ci skip]')"
+    runs-on: ubuntu-26.04
+    if: "(needs.detect-changes.outputs.changed != '0' || github.event_name == 'push')"
+    needs: detect-changes
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-24.04]
         container: [""]
         shell: [dash]
         jobs: [4]
     steps:
-      - uses: helm/kind-action@v1.10.0
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
 
       - run: kubectl cluster-info
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: Setup Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: ${{ env.VERSION_HELM }}
+          version: v${{ env.VERSION_HELM }}
 
       - name: Setup Sops
-        uses: mdgreenwald/mozilla-sops-action@v1.6.0
+        uses: jkroepke/setup-sops@d7c8049a41660f6d744f3e1f520145ced869cae8 # v1.5.83
         with:
           version: ${{ env.VERSION_SOPS }}
 
       - name: Setup vals
-        uses: jkroepke/setup-vals@v1.1.3
+        uses: jkroepke/setup-vals@e161e238245a4c38151a2fbc108de46600c33d39 # v1.5.113
         with:
-          version: ${{ env.VERSION_VALS }}
+          version: v${{ env.VERSION_VALS }}
 
       - name: Print Environment
         run: |-
@@ -357,7 +447,7 @@ jobs:
           BATS_REPORT_FILENAME: TEST-sops.xml
 
       - name: Upload Test Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: junit-test-results-it-${{ strategy.job-index }}
@@ -366,18 +456,31 @@ jobs:
           if-no-files-found: error
 
   report:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     if: always()
     needs:
       - unit-tests
       - integration-tests
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: .
 
       - name: Publish Test Report
-        uses: mikepenz/action-junit-report@v4
+        uses: mikepenz/action-junit-report@6ef3fdcfcd5f0b5d14df3e659ef19b8c6820f93d # v6.6.1
         with:
           report_paths: '**/TEST-*.xml'
           detailed_summary: true
+
+  fail:
+    if: "${{ cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure') }}"
+    needs:
+      - "lint"
+      - "report"
+      - "coverage"
+    runs-on: "ubuntu-26.04"
+    steps:
+      - name: "verify checks passed"
+        run: |
+          echo "Some checks have failed!"
+          exit 1

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>jkroepke/renovate-config"
+  ],
+  "git-submodules": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "matchFileNames": [
+        "/(^|/).+\\.md$/"
+      ],
+      "groupName": "docs dependencies",
+      "semanticCommitScope": "docs-deps",
+      "addLabels": [
+        "chore"
+      ],
+      "separateMajorMinor": false
+    },
+    {
+      "matchManagers": ["git-submodules"],
+      "groupName": "all bats dependencies",
+      "semanticCommitScope": "dev-deps",
+      "addLabels": [
+        "chore"
+      ]
+    },
+    {
+      "matchFileNames": ["Gemfile"],
+      "semanticCommitScope": "dev-deps",
+      "addLabels": [
+        "chore"
+      ]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/(^|/).+\\.md$/"
+      ],
+      "matchStrings": [
+        "ARG\\s+ARGOCD_VERSION=\"v(?<currentValue>.*?)\""
+      ],
+      "depNameTemplate": "quay.io/argoproj/argocd",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/(^|/).+\\.md$/"
+      ],
+      "matchStrings": [
+        "ARG\\s+SOPS_VERSION=(?<currentValue>.*?)\\s+",
+        "- name: SOPS_VERSION\\n\\s+value: \"(?<currentValue>.*?)\""
+      ],
+      "depNameTemplate": "getsops/sops",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/(^|/).+\\.md$/"
+      ],
+      "matchStrings": [
+        "ARG\\s+KUBECTL_VERSION=(?<currentValue>.*?)\\s+",
+        "- name: KUBECTL_VERSION\\n\\s+value: \"(?<currentValue>.*?)\""
+      ],
+      "depNameTemplate": "kubernetes/kubernetes",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/(^|/).+\\.md$/"
+      ],
+      "matchStrings": [
+        "ARG\\s+VALS_VERSION=(?<currentValue>.*?)\\s+",
+        "- name: VALS_VERSION\\n\\s+value: \"(?<currentValue>.*?)\""
+      ],
+      "depNameTemplate": "helmfile/vals",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/(^|/).+\\.md$/"
+      ],
+      "matchStrings": [
+        "ARG\\s+HELM_SECRETS_VERSION=(?<currentValue>.*?)\\s+",
+        "- name: HELM_SECRETS_VERSION\\n\\s+value: \"(?<currentValue>.*?)\""
+      ],
+      "depNameTemplate": "jkroepke/helm-secrets",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/(^|/).+\\.md$/"
+      ],
+      "matchStrings": [
+        "ARG\\s+AGE_VERSION=(?<currentValue>.*?)\\s+",
+        "- name: AGE_VERSION\\n\\s+value: \"(?<currentValue>.*?)\""
+      ],
+      "depNameTemplate": "FiloSottile/age",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    }
+  ]
+}

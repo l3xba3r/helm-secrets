@@ -19,7 +19,7 @@ helm template -f secrets://https://user:password@raw.githubusercontent.com/jkroe
 ```
 
 Additionally, the authentication details can be provided by environment variables or from a file system using the
-[.netrc](https://everything.curl.dev/usingcurl/netrc) standard this is useful inside CD systems.
+[.netrc](https://everything.curl.dev/usingcurl/netrc.html) standard this is useful inside CD systems.
 
 
 ### Via environment variables
@@ -63,7 +63,7 @@ helm-secrets support [helm-git](https://github.com/aslafy-z/helm-git).
 With this combination, you can fetch secret from other git repositories.
 
 ```bash
-helm template -f secrets://git+https://[provider.com]/[user]/[repo]@[path/to/charts][?[ref=git-ref][&sparse=0][&depupdate=0]]
+helm template -f secrets://git+https://<provider.com>/<path/to/repo>[@path/to/charts][?[ref=git-ref][&sparse=0][&depupdate=0][&package=0]]
 ```
 
 Other plugins like [helm-s3, helm-gcs](https://helm.sh/docs/community/related/#helm-plugins) are supported as well.

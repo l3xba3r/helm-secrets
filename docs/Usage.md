@@ -15,7 +15,6 @@ Available Commands:
   decrypt Decrypt secrets file
   edit    Edit secrets file and encrypt afterwards
   dir     Get plugin directory
-  patch   Enables windows specific adjustments
   <cmd>   wrapper that decrypts encrypted yaml files before running helm <cmd>
 
 Available Options:
@@ -42,9 +41,59 @@ Decrypted files have the suffix ".dec" by default. This can be changed using the
   encrypt Encrypt secrets file
   decrypt Decrypt secrets file
   edit    Edit secrets file and encrypt afterwards
+  doctor  Check the helm-secrets setup (plugins, backend, keys, security settings)
 ```
 
 Each of these commands have their own help.
+
+## Troubleshooting with `helm secrets doctor`
+
+`helm secrets doctor` is a read-only check of the local setup. Run it first when something does not work, e.g. after
+upgrading to Helm 4 or when setting up a new CI runner or Argo CD repo-server image.
+
+```
+$ helm secrets doctor
+helm-secrets doctor
+
+Helm
+[ OK ] helm 4.3.1 (helm)
+
+helm-secrets plugins
+[ OK ] helm-secrets 4.7.11-dev
+[ OK ] plugin 'secrets' 4.7.11-dev
+[ OK ] plugin 'secrets-getter' 4.7.11-dev
+[FAIL] plugin 'secrets-post-renderer' is not installed: --evaluate-templates will not work
+
+Secret backend
+[INFO] backend 'sops'
+[ OK ] sops 3.13.3 (sops)
+
+Decryption keys (presence only, contents are never read)
+[ OK ] age: key file found at '/home/user/.config/sops/age/keys.txt'
+[ OK ] gpg: 'gpg' available
+
+Security
+[INFO] HELM_SECRETS_ALLOWED_BACKENDS is not set (recommended in shared environments such as Argo CD)
+[ OK ] curl or wget available for remote (http/https) value files
+
+Summary: 1 failed, 0 warning(s)
+```
+
+What it checks:
+
+- **Helm**: the `helm` binary (or `HELM_SECRETS_HELM_PATH`) runs, and which version it is.
+- **Plugins**: on Helm 4, that all three plugins (`secrets`, `secrets-getter`, `secrets-post-renderer`) are installed
+  with the same version. On Helm 3, that the `secrets` plugin is listed.
+- **Secret backend**: the selected backend (`--backend`/`HELM_SECRETS_BACKEND`) binary is found and recent enough. For
+  sops older than 3.12.0 it notes that post-quantum age recipients are not supported.
+- **Keys** (sops only): whether `SOPS_AGE_KEY`, `SOPS_AGE_KEY_CMD`, `SOPS_AGE_KEY_FILE`, the default age key file or `gpg`
+  is available. Key files are only tested for existence; their contents are never read or printed.
+- **Security**: whether `HELM_SECRETS_ALLOWED_BACKENDS` is set (a warning inside Argo CD, where it is recommended), and
+  whether `curl` or `wget` is available for remote value files.
+
+Every check is printed with a status: `[ OK ]`, `[INFO]`, `[WARN]` or `[FAIL]`. The command exits with `1` if at least
+one check failed, so it can be used as a gate in CI pipelines or container image builds. Warnings do not change the exit
+code.
 
 # Use-case and workflow
 
@@ -97,15 +146,6 @@ $ helm secrets edit examples/sops/secrets.yaml
 
 There is new feature in SOPS master that allows using \$EDITOR to spcify editor used by sops but not released yet.
 
-### Clean
-
-The operation will delete all decrypted files in a directory, recursively:
-
-```
-$ helm secrets clean examples/sops/
-removed examples/sops/secrets.yaml.dec
-```
-
 If you use git there is commit hook that prevents commiting decrypted files and you can add all \*.yaml.dec files in you repository `.gitignore` file.
 
 ### Summary
@@ -137,7 +177,7 @@ charts/
 ```
 
 As you can see we can run different PGP or KMS keys per project, globally or per any tree level. Thanks to this we can isolate tree on different CI/CD instances using same GIT repository.
-As we use simple -f option when running the helm wrapper we can just use encrypted secrets.yaml and all these secrets will be decrypted and cleaned on the fly before and after helm run.
+As we use simple -f option when running the helm wrapper we can just use encrypted secrets.yaml and all these secrets will be decrypted on the fly before and after helm run.
 
 `.sops.yaml` file example
 
@@ -218,7 +258,7 @@ removed helm_vars/secrets.yaml.dec
 
 You can see that we use a global secrets file and a specific secrets file for this app in this project/environment/region. We use some plain value files next to secrets. We use values from secrets in some secrets template in helloworld application chart template and some values are used in the configmap template in the same chart. Some values are added as env variables in deployment manifest templates in the chart. As you can see we can use secrets and values in helm in many ways. Everything depends on use case.
 
-Even when helm failed then decrypted files are cleaned
+Even when helm fails, decrypted files are removed automatically
 
 ```
 AWS_PROFILE=sandbox helm-wrapper upgrade \
@@ -386,6 +426,10 @@ helm template -f 'secrets://secrets.yaml' --set-file 'secrets+literal://vals!ref
 ## Restriction
 
 You can configure the allowed backend by the environment variable `HELM_SECRETS_ALLOWED_BACKENDS`, e.g. `HELM_SECRETS_ALLOWED_BACKENDS=sops,vals`
+
+Out-of-tree backends (paths to a backend script) are only accepted in the `backend!` prefix when the path is listed in
+`HELM_SECRETS_ALLOWED_BACKENDS`, e.g. `HELM_SECRETS_ALLOWED_BACKENDS=sops,/opt/helm-secrets/backend.sh`.
+The `--backend` option and `HELM_SECRETS_BACKEND` are not affected by this additional restriction.
 
 ## Limitations
 

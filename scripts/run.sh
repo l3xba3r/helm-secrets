@@ -2,9 +2,23 @@
 
 set -euf
 
+# Helm 4 discards the stderr of post-renderer plugins.
+# helm_wrapper forwards this file after helm exits.
+if [ -n "${HELM_SECRETS_POST_RENDERER_STDERR:-}" ]; then
+    for arg in "$@"; do
+        if [ "${arg}" = "post-renderer" ]; then
+            exec 2>>"${HELM_SECRETS_POST_RENDERER_STDERR}"
+            break
+        fi
+    done
+fi
+
 if [ "${HELM_DEBUG:-}" = "1" ] || [ "${HELM_DEBUG:-}" = "true" ] || [ -n "${HELM_SECRETS_DEBUG+x}" ]; then
     set -x
 fi
+
+# Make sure HELM_BIN is set (normally by the helm command)
+HELM_BIN="${HELM_SECRETS_HELM_PATH:-"${HELM_BIN:-helm}"}"
 
 # Path to current directory
 SCRIPT_DIR="${HELM_PLUGIN_DIR}/scripts"
@@ -23,13 +37,6 @@ SCRIPT_DIR="${HELM_PLUGIN_DIR}/scripts"
 
 # shellcheck source=scripts/lib/http.sh
 . "${SCRIPT_DIR}/lib/http.sh"
-
-# Make sure HELM_BIN is set (normally by the helm command)
-HELM_BIN="${HELM_SECRETS_HELM_PATH:-"${HELM_BIN:-helm}"}"
-
-if on_cygwin; then
-    HELM_BIN="$(cygpath -u "${HELM_BIN}")"
-fi
 
 # Create a base temporary directory
 TMPDIR="${HELM_SECRETS_DEC_TMP_DIR:-"$(mktemp -d)"}"
@@ -74,12 +81,18 @@ trap 'trap - EXIT; _trap; exit 1' HUP INT QUIT TERM
 load_secret_backend "${SECRET_BACKEND}"
 DEFAULT_SECRET_BACKEND="${SECRET_BACKEND}"
 
-if [ "${LOAD_GPG_KEYS}" != "false" ]; then
+# Child downloader plugins inherit GNUPGHOME and must not import the same keys again.
+if [ "${LOAD_GPG_KEYS}" != "false" ] && [ "${HELM_SECRETS_INTERNAL_GPG_KEYS_LOADED:-false}" != "true" ]; then
     _gpg_load_keys
+    export HELM_SECRETS_INTERNAL_GPG_KEYS_LOADED=true
 fi
 
+# Preserve the imported-key marker and GPG home across WSL/Windows boundaries.
+# WSLENV is ignored outside WSL; undefined variables are not transferred.
+WSLENV="HELM_SECRETS_INTERNAL_GPG_KEYS_LOADED:GNUPGHOME/p:${WSLENV:-}"
+export WSLENV
+
 if [ -n "${HELM_SECRET_WSL_INTEROP+x}" ]; then
-    shift
     argc=$#
     j=0
 
@@ -144,6 +157,15 @@ while true; do
         _helm_winpath "$(dirname "${SCRIPT_DIR}")"
         break
         ;;
+    doctor)
+        # shellcheck source=scripts/commands/version.sh
+        . "${SCRIPT_DIR}/commands/version.sh"
+        # shellcheck source=scripts/commands/doctor.sh
+        . "${SCRIPT_DIR}/commands/doctor.sh"
+
+        doctor
+        break
+        ;;
     post-renderer)
         # shellcheck source=scripts/commands/downloader.sh
         . "${SCRIPT_DIR}/commands/post-renderer.sh"
@@ -156,13 +178,6 @@ while true; do
         . "${SCRIPT_DIR}/commands/downloader.sh"
 
         downloader "$2" "$3" "$4" "$5"
-        break
-        ;;
-    patch)
-        # shellcheck source=scripts/commands/patch.sh
-        . "${SCRIPT_DIR}/commands/patch.sh"
-
-        patch "$2"
         break
         ;;
     --help | -h | help)
